@@ -1,0 +1,32 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: coso_q1
+      POSTGRES_USER: coso
+      POSTGRES_PASSWORD: coso
+    ports:
+      - "5432:5432"
+    volumes:
+      - q1_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coso -d coso_q1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://coso:coso@db:5432/coso_q1
+      CORPUS_DIR: /app/q1
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  q1_pgdata:

@@ -27,9 +27,9 @@ The judged priorities are:
 
 ## Solution
 
-Build a FastAPI service backed by Postgres 16 and pgvector. The service ingests
-all PDFs from `q1/`, stores page-aware chunks and structured sidecar facts, and
-serves `POST /query` as an SSE stream.
+Build a FastAPI service backed by Docker-only Postgres 16 and pgvector. The
+service ingests all PDFs from `q1/`, stores page-aware chunks and a narrow
+IN-09 conflict sidecar, and serves `POST /query` as an SSE stream.
 
 The implementation has two reproducible modes:
 
@@ -39,8 +39,8 @@ The implementation has two reproducible modes:
   IN-09 conflict resolution.
 
 Model/provider defaults are defined in `design-decisions.md`. The architecture
-assumes Gemini Flash for generation, extraction, evidence selection, and
-judging, with Gemini embeddings for retrieval.
+assumes `gemini-3-flash-preview` for generation, extraction, evidence selection, and
+judging, with `gemini-embedding-2` at 768 dimensions for retrieval.
 
 ## System Components
 
@@ -80,14 +80,23 @@ Ingestion is page-first and provenance-preserving.
 3. Extract local text and tables first.
 4. Detect weak pages using heuristics such as low character count, poor text
    density, or table-critical document patterns.
-5. Use Gemini OCR/table fallback only for pages that need it.
+5. Use Gemini OCR/table fallback only for query-relevant weak pages or failed
+   retrieval cases.
 6. Create page-aware chunks with stable chunk IDs, filename, page number,
    extraction method, text, and metadata.
 7. Embed chunks with Gemini embeddings.
-8. Extract typed KG sidecar facts for tender/date/fact reasoning.
+8. Extract IN-09 conflict facts from the three IN-09 corrigenda.
 
 The baseline mode uses only local extraction where available. The fixed mode can
 use targeted Gemini extraction fallback.
+
+Chunking defaults:
+
+- Never split across PDF page boundaries.
+- Target about 800 tokens per chunk with about 100 tokens of overlap.
+- Prefer paragraph/list boundaries over fixed-width splitting.
+- Keep table pages whole up to about 1500 tokens; split larger tables by row
+  groups while preserving headers.
 
 ### Storage Model
 
@@ -96,11 +105,12 @@ Postgres stores:
 - Corpus manifest: document path, hash, ingestion version, timestamps.
 - Documents: filename, inferred document type, tender/package identifiers.
 - Pages: document ID, page number, extraction method, raw page text.
-- Chunks: page ID, chunk text, token estimate, metadata, embedding vector.
-- Lexical index fields: generated/searchable text for Postgres full-text
-  retrieval.
-- KG facts: fact type, normalized subject, normalized value, source chunk,
-  effective date, corrigendum number, confidence.
+- Chunks: page ID, chunk text, token estimate, metadata, `vector(768)`
+  embedding.
+- Lexical index fields: generated `tsvector` column for Postgres full-text
+  retrieval, indexed with GIN and ranked with `ts_rank_cd`.
+- Conflict facts: normalized tender/package ID, corrigendum number/date, field
+  name, field value, source chunk, confidence.
 - Eval runs: query ID, mode, retrieved evidence, answer, refusal, metrics.
 
 ### Baseline Query Flow
@@ -109,7 +119,7 @@ Baseline flow:
 
 1. Embed the question with Gemini embeddings.
 2. Retrieve top-k chunks using vector similarity.
-3. Pass retrieved chunks to Gemini Flash for answer generation.
+3. Pass retrieved chunks to `gemini-3-flash-preview` for answer generation.
 4. Require inline citations in the prompt, but do not run a separate reranker,
    verifier, conflict resolver, or OCR fallback.
 
@@ -119,18 +129,19 @@ There is no reranker in baseline mode.
 
 Fixed-mode flow:
 
-1. Retrieve a broad candidate set using hybrid lexical plus vector retrieval.
-2. Use Gemini Flash as an evidence selector/reranker over candidate chunks.
-3. Detect whether the question triggers KG sidecar logic, especially tender
-   identity, date, requirement, quantity, and IN-09 corrigendum questions.
+1. Retrieve a broad candidate set using Postgres full-text search plus pgvector
+   similarity search.
+2. Use `gemini-3-flash-preview` as an evidence selector/reranker over candidate
+   chunks.
+3. Detect whether the question triggers IN-09 conflict sidecar logic.
 4. Generate a structured answer draft with sentence-level citations.
 5. Verify cited claims against the selected evidence.
 6. Repair unsupported claims once if the verifier finds fixable issues.
 7. Refuse if evidence remains insufficient or citations fail validation.
 8. Stream the validated answer via SSE.
 
-The fixed pipeline uses a reranker: Gemini Flash evidence selection after broad
-hybrid retrieval.
+The fixed pipeline uses a reranker: `gemini-3-flash-preview` evidence selection
+after broad hybrid retrieval.
 
 ### Citation Contract
 
@@ -162,24 +173,20 @@ The fixed pipeline refuses when:
 Refusals should be short, explain the evidence problem, and cite closest
 evidence when that helps the user understand the boundary.
 
-### KG Sidecar
+### IN-09 Conflict Sidecar
 
-The KG sidecar is a typed fact store, not a full knowledge graph product. It
-extracts:
+The conflict sidecar is a narrow typed fact store, not a full knowledge graph
+product. It initially extracts facts only from the three IN-09 corrigenda:
 
-- Document type.
 - Tender/package IDs.
 - Corrigendum number and date.
-- Deadline fields.
-- Requirements and eligibility criteria.
-- Quantities, ratios, and BOQ/specification facts.
-- Clause-like facts needed by the baseline queries.
+- Last-date-for-addendum fields.
+- Source chunk citations for each extracted value.
 
 The main use cases are:
 
-- Benchmark KG-style fact retrieval against evidence-first RAG.
 - Resolve the IN-09 conflict-over-time problem.
-- Support date/fact normalization for evals and writeups.
+- Provide a small KG-style benchmark against evidence-first RAG.
 
 For IN-09 conflicts, latest authoritative corrigendum wins, and superseded
 conflicting values are disclosed with citations.
@@ -218,7 +225,8 @@ The implementation should keep these as deep modules with narrow interfaces:
 - Evidence selection: Gemini reranking for fixed mode only.
 - Answering: prompt construction, structured answer generation, and SSE output.
 - Verification: citation parsing, source checks, support checks, repair/refusal.
-- KG sidecar: fact extraction, normalization, and conflict resolution.
+- Conflict sidecar: IN-09 fact extraction, normalization, and conflict
+  resolution.
 - Evals: query execution, metrics, golden fixtures, and report generation.
 
 ## Test Surfaces

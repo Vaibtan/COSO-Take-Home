@@ -16,11 +16,14 @@ design and `design-decisions.md` for rationale.
 ### What to build
 
 Create the FastAPI application, configuration layer, Docker Compose stack,
-Postgres 16 with pgvector, and health check path.
+Postgres 16 with pgvector, uv-managed Python environment, and health check path.
 
 ### Acceptance criteria
 
 - [ ] `docker compose up` starts Postgres and the API.
+- [ ] Postgres runs only through Docker Compose; no local Postgres fallback is
+      required or documented.
+- [ ] `uv` is used for dependency management and local virtualenv setup.
 - [ ] `GET /healthz` reports API and DB readiness.
 - [ ] App configuration reads Gemini, DB, model, and corpus settings from env.
 - [ ] Project has a clear Python package layout and dependency file.
@@ -34,14 +37,17 @@ Postgres 16 with pgvector, and health check path.
 ### What to build
 
 Add schema support for corpus manifests, documents, pages, chunks, embeddings,
-KG facts, and eval runs.
+IN-09 conflict facts, and eval runs.
 
 ### Acceptance criteria
 
 - [ ] Migrations create pgvector extension and all Q1 tables.
-- [ ] Chunks store filename, page number, text, metadata, and embedding vector.
+- [ ] Chunks store filename, page number, text, metadata, and `vector(768)`
+      embedding.
+- [ ] Chunks include a generated `tsvector` field with a GIN index for Postgres
+      full-text retrieval.
 - [ ] Corpus manifest stores document hash and ingestion version.
-- [ ] KG facts can reference source chunks.
+- [ ] IN-09 conflict facts can reference source chunks.
 - [ ] Eval run records can store query ID, mode, answer, evidence, and metrics.
 
 ## Slice 3: Baseline Ingestion
@@ -60,6 +66,9 @@ and idempotent startup ingestion.
 - [ ] `POST /ingest?force=false` skips unchanged documents.
 - [ ] `POST /ingest?force=true` rebuilds indexed corpus data.
 - [ ] Baseline chunks preserve filename and page number.
+- [ ] Chunking preserves page boundaries, targets about 800 tokens with about
+      100-token overlap, and handles table pages without splitting rows away
+      from headers.
 - [ ] Baseline does not use OCR fallback, reranking, verifier, or KG conflict
       resolution.
 
@@ -71,7 +80,7 @@ and idempotent startup ingestion.
 ### What to build
 
 Implement `POST /query` in `baseline` mode with vector top-k retrieval and
-Gemini Flash answer generation.
+`gemini-3-flash-preview` answer generation.
 
 ### Acceptance criteria
 
@@ -112,7 +121,10 @@ merged and deduplicated candidate chunks.
 
 ### Acceptance criteria
 
-- [ ] Fixed mode retrieves from both lexical and vector signals.
+- [ ] Fixed mode retrieves from both Postgres full-text search and pgvector
+      similarity search.
+- [ ] Lexical retrieval uses `tsvector`, `websearch_to_tsquery` or
+      `plainto_tsquery`, and `ts_rank_cd`.
 - [ ] Candidate chunks are deduplicated by stable chunk ID.
 - [ ] Retrieval scores and source reasons are stored in debug metadata.
 - [ ] Baseline retrieval behavior remains unchanged.
@@ -124,8 +136,8 @@ merged and deduplicated candidate chunks.
 
 ### What to build
 
-Use Gemini Flash to select and rank supporting evidence from the fixed-mode
-candidate set before answer generation.
+Use `gemini-3-flash-preview` to select and rank supporting evidence from the
+fixed-mode candidate set before answer generation.
 
 ### Acceptance criteria
 
@@ -160,34 +172,38 @@ repair attempt, and conservative refusal.
 
 ### What to build
 
-Add fixed-mode ingestion fallback for low-text, scanned, and table-critical
-pages using Gemini.
+Add fixed-mode ingestion fallback for query-relevant low-text, scanned, and
+table-critical pages using Gemini.
 
 ### Acceptance criteria
 
 - [ ] Local extraction runs first.
 - [ ] Weak pages are detected with deterministic heuristics.
+- [ ] Fallback is scoped to pages needed by the 15-query eval set or pages
+      identified by failed retrieval/error analysis; it does not OCR every weak
+      page in large DGMS PDFs by default.
 - [ ] Gemini fallback stores extraction method metadata.
 - [ ] Fallback preserves filename and page number.
 - [ ] Baseline ingestion remains local-only.
 
-## Slice 10: KG Sidecar Fact Extraction
+## Slice 10: IN-09 Conflict Fact Extraction
 
 **Type:** AFK  
 **Blocked by:** Slice 9  
 
 ### What to build
 
-Extract typed tender/date/fact records from chunks and store them with source
-citations.
+Extract typed IN-09 corrigendum facts from the three IN-09 documents and store
+them with source citations.
 
 ### Acceptance criteria
 
-- [ ] KG facts include tender/package IDs, document type, corrigendum metadata,
-      deadlines, requirements, quantities, and source chunk IDs.
-- [ ] Facts are queryable by normalized tender/package ID and fact type.
+- [ ] Conflict facts include tender/package ID, document type, corrigendum
+      number/date, last-date-for-addendum value, and source chunk IDs.
+- [ ] Facts are queryable by normalized IN-09 tender/package ID and field type.
 - [ ] Fact extraction stores confidence and source provenance.
-- [ ] KG sidecar can be benchmarked separately from evidence-first retrieval.
+- [ ] The conflict sidecar can be benchmarked separately from evidence-first
+      retrieval for the Problem B query.
 
 ## Slice 11: IN-09 Conflict Resolver
 
@@ -312,7 +328,7 @@ Finalize README and submission-facing documentation.
 7. Slice 7: Gemini Evidence Selector/Reranker
 8. Slice 8: Citation Verification and Refusal
 9. Slice 9: Targeted Gemini OCR and Table Fallback
-10. Slice 10: KG Sidecar Fact Extraction
+10. Slice 10: IN-09 Conflict Fact Extraction
 11. Slice 11: IN-09 Conflict Resolver
 12. Slice 12: Deterministic Eval Gates
 13. Slice 13: Problem A Artifacts

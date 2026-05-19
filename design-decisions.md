@@ -23,12 +23,13 @@ and observability across providers.
 ### 2. Use hybrid ingestion with targeted Gemini OCR/table fallback
 
 **Decision:** Extract text and tables locally first, then use Gemini only for
-low-text, scanned, or table-critical pages.
+query-relevant low-text, scanned, or table-critical pages.
 
 **Reason:** The corpus includes clean PDFs, scanned DGMS documents, BOQs, and
 corrigenda. Local extraction is cheaper, more deterministic, and preserves page
-provenance well. Gemini fallback is used where local extraction is likely to
-miss answer-bearing evidence, especially scanned pages and tables.
+provenance well. Gemini fallback is reserved for fixed-mode pages that matter
+to the 15-query evaluation or to failed retrieval cases, so large scanned PDFs
+do not turn into uncontrolled OCR cost.
 
 ### 3. Make evidence-first hybrid RAG the main architecture
 
@@ -41,16 +42,17 @@ retrieval. Evidence-first RAG keeps answers grounded in inspectable chunks and
 makes failures easier to analyze. It is also a better fit for the required
 before/after evaluation than a large, opaque agent workflow.
 
-### 4. Add a KG sidecar, not a full KG-first pipeline
+### 4. Add an IN-09-first conflict sidecar, not a full KG-first pipeline
 
-**Decision:** Build a typed fact/event sidecar for benchmarking and conflict
-handling, while keeping evidence-first RAG as the production answer path.
+**Decision:** Build a narrow typed fact/event sidecar for the IN-09
+corrigendum conflict first, while keeping evidence-first RAG as the production
+answer path.
 
 **Reason:** A full knowledge-graph-first RAG system would be interesting, but
-it is too much implementation risk for the take-home. A sidecar gives us the
-benefits that matter here: structured tender metadata, dates, corrigendum
-ordering, requirements, quantities, and fact comparison for known conflict
-cases.
+it is too much implementation risk for the take-home. The judged KG-like need
+is Problem B: ordering the three IN-09 corrigenda and citing superseded values.
+General tender/fact extraction can be deferred unless the evals show it is
+needed.
 
 ### 5. Use sentence-level inline citations
 
@@ -103,8 +105,9 @@ grounding failures, and temporal conflicts.
 
 ### 10. Use a reranker only in the fixed pipeline
 
-**Decision:** The baseline has no reranker. The fixed pipeline uses Gemini
-Flash as an evidence selector/reranker after broad hybrid retrieval.
+**Decision:** The baseline has no reranker. The fixed pipeline uses
+`gemini-3-flash-preview` as an evidence selector/reranker after broad hybrid
+retrieval.
 
 **Reason:** The reranker is part of the improvement being evaluated. Keeping it
 out of the baseline makes the comparison clearer. In the fixed pipeline,
@@ -158,15 +161,16 @@ gitignored.
 **Reason:** Reviewers need to inspect reasoning and reproducible summaries, not
 large generated intermediate data. This keeps the repo reviewable.
 
-### 16. Keep the KG sidecar scoped to tender/date/fact extraction
+### 16. Keep structured facts scoped to IN-09 first
 
-**Decision:** Extract document type, tender/package IDs, corrigendum number and
-date, deadlines, requirements, quantities, and clause-like facts needed by the
-baseline queries.
+**Decision:** Implement structured extraction first for the three IN-09
+corrigenda: document identity, tender/package ID, corrigendum number/date,
+last-date-for-addendum values, and source chunk citations.
 
-**Reason:** Broad entity/relation extraction would be noisy and expensive. A
-typed fact graph is enough to benchmark KG-style reasoning and solve the IN-09
-conflict problem.
+**Reason:** Broad entity/relation extraction would be noisy and expensive. The
+IN-09 conflict is the concrete judged failure mode. Keeping the schema
+extensible is useful, but the implementation should not spend time extracting
+facts across all 20 documents until the core service and Problem A are working.
 
 ### 17. Use conservative refusal
 
@@ -177,15 +181,26 @@ refuse rather than answer with caveats.
 an unsupported answer can create more harm than a refusal because construction
 and tender decisions depend on traceable evidence.
 
-### 18. Default to Gemini Flash for model calls
+### 18. Pin Gemini models explicitly
 
-**Decision:** Use Gemini Flash as the default generation, extraction,
-reranking, and judging model, with embeddings handled by Gemini embeddings.
+**Decision:** Use `gemini-3-flash-preview` as the default generation, extraction,
+reranking, and judging model. Use `gemini-embedding-2` with
+`output_dimensionality=768` for chunk and query embeddings.
 
-**Reason:** Flash keeps the pipeline cheaper and faster while staying within
-the Gemini ecosystem. The implementation should leave model names configurable
-so a stronger model can be substituted if Flash underperforms on final answer
-quality or verification.
+**Reason:** Pinning model names prevents implementation drift. A 768-dimension
+embedding keeps pgvector storage and retrieval cheap while staying compatible
+with Gemini's supported output dimensions. Model names remain configurable so a
+stronger generator or verifier can be substituted if evals show Flash is not
+reliable enough.
+
+### 19. Use `uv` for Python and Docker-only Postgres
+
+**Decision:** Manage the Python environment with `uv`. Run Postgres only via
+Docker Compose using a Postgres 16 image with pgvector enabled.
+
+**Reason:** `uv` gives fast, reproducible dependency setup for the local app.
+Docker-only Postgres keeps reviewer setup predictable and avoids drift from
+locally installed database versions or missing pgvector extensions.
 
 ## Rejected or Deferred Alternatives
 
@@ -193,6 +208,12 @@ quality or verification.
 
 Deferred because it would shift too much effort into schema design and
 extraction quality before proving the basic cited-answer service.
+
+### General fact extraction across all documents
+
+Deferred because Q1 only needs structured conflict handling for IN-09 to
+demonstrate Problem B. Broad typed extraction can be revisited after the core
+RAG and eval path work.
 
 ### Gemini-first ingestion for every page
 
@@ -225,7 +246,7 @@ allow upgrading selected steps later.
 - Upgrade final answer generation or citation verification from Flash to a
   stronger Gemini model if evals show Flash cannot reliably follow the
   citation contract.
-- Expand the KG sidecar beyond tender/date/fact extraction only if the 15-query
-  benchmark shows structured facts materially outperform evidence-first RAG.
+- Expand the conflict sidecar beyond IN-09 only if the 15-query benchmark shows
+  structured facts materially outperform evidence-first RAG.
 - Add a local cross-encoder reranker if Gemini evidence selection becomes too
   slow, too expensive, or too variable for regression testing.
