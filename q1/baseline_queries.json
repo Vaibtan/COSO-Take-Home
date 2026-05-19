@@ -1,0 +1,20 @@
+{
+  "instructions": "Run each query against your ingestion pipeline. Categorize each result in your analysis (Problem A).",
+  "queries": [
+    {"id": "q01", "question": "What is the last date for submission of bids in the Katni-Umaria NH-43 maintenance tender?"},
+    {"id": "q02", "question": "What is the financial expert experience requirement in the NHAI 2023 transaction advisor RFP?"},
+    {"id": "q03", "question": "Which document covers PEB structures for Patna Metro elevated stations?"},
+    {"id": "q04", "question": "When was the deadline for issuing addendum extended to in the Indore IN-09 tender?"},
+    {"id": "q05", "question": "What is the cement mortar ratio for brick masonry in superstructure?"},
+    {"id": "q06", "question": "What is the bid validity period for the JNPT maintenance tender?"},
+    {"id": "q07", "question": "What HEMM safety features are required in opencast mines?"},
+    {"id": "q08", "question": "What is the difference between the BH&IN-02 tender and the IN-09 tender?"},
+    {"id": "q09", "question": "What is the minimum turnover requirement in the NHAI 2023 advisor tender?"},
+    {"id": "q10", "question": "What is the M25 concrete proportion specified in the boundary wall BOQ?"},
+    {"id": "q11", "question": "Why was the DMRC train advertising tender cancelled?"},
+    {"id": "q12", "question": "What is the penalty for late submission?"},
+    {"id": "q13", "question": "What was the original deadline in the IN-09 tender before any corrigenda?"},
+    {"id": "q14", "question": "What pre-bid clarification process does NHAI use?"},
+    {"id": "q15", "question": "Summarize all DGMS safety circulars from 2018."}
+  ]
+}
